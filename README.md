@@ -1,2 +1,2 @@
 # agents
-Toolkit for easy management of AI agents 
+Toolkit for easy management of personal AI agents 
