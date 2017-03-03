@@ -11,6 +11,11 @@ has at least ~100k characters. ~1M is better.
 '''
 
 from __future__ import print_function
+import sys  
+
+reload(sys)  
+sys.setdefaultencoding('utf8')
+
 from keras.models import Sequential
 from keras.layers import Dense, Activation
 from keras.layers import LSTM
@@ -19,6 +24,17 @@ from keras.utils.data_utils import get_file
 import numpy as np
 import random
 import sys
+
+from tweepy.streaming import StreamListener
+from tweepy import OAuthHandler
+from tweepy import Stream
+
+#Variables that contains the user credentials to access Twitter API 
+access_token = "14427338-qTKP9eaTUtVhctkw9VzKlyEaunQyLwzL5nRhoOdcH"
+access_token_secret = "VNwfXQYrOrpfEtuWDUDD7lTWddhSrUBYVb09RvNIyKG0P"
+consumer_key = "u4wa6Q14ivCu1M6sE4o1Q"
+consumer_secret = "7URlnEg8mQaIp009v1N0nCujNNlAutKRPTnB8A5USYU"
+
 
 path = get_file('nietzsche.txt', origin="https://s3.amazonaws.com/text-datasets/nietzsche.txt")
 text = open(path).read().lower()
@@ -29,26 +45,12 @@ print('total chars:', len(chars))
 c2i = dict((c, i) for i, c in enumerate(chars))
 i2c = dict((i, c) for i, c in enumerate(chars))
 
-# cut the text in semi-redundant sequences of maxlen characters
-maxlen = 140
-step = 3
-sentences = []
-next_chars = []
-for i in range(0, len(text) - maxlen, step):
-    sentence = text[i: i + maxlen]
-    print('>')
-    print(sentence)
-    sentences.append(sentence)
-    next_chars.append(text[i + maxlen])
-print('nb sequences:', len(sentences))
+text = None
 
-print('Vectorization...')
-X = np.zeros((len(sentences), maxlen, len(chars)), dtype=np.bool)
-y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
-for i, sentence in enumerate(sentences):
-    for t, char in enumerate(sentence):
-        X[i, t, c2i[char]] = 1
-    y[i, c2i[next_chars[i]]] = 1
+# cut the text in semi-redundant sequences of maxlen characters
+maxlen = 14
+step = 3
+
 
 
 # build the model: a single LSTM
@@ -71,37 +73,90 @@ def sample(preds, temperature=1.0):
     probas = np.random.multinomial(1, preds, 1)
     return np.argmax(probas)
 
-# train the model, output generated text after each iteration
-for iteration in range(1, 60):
-    print()
-    print('-' * 50)
-    print('Iteration', iteration)
-    model.fit(X, y, batch_size=128, nb_epoch=1)
+iteration = 0
 
-    start_index = random.randint(0, len(text) - maxlen - 1)
+class StdOutListener(StreamListener):
 
-    for diversity in [0.2, 0.5, 1.0, 1.2]:
-        print()
-        print('----- diversity:', diversity)
+    def on_error(self, status):
+        print(status)
 
-        generated = ''
-        sentence = text[start_index: start_index + maxlen]
-        generated += sentence
-        print('----- Generating with seed: "' + sentence + '"')
-        sys.stdout.write(generated)
+    def on_status(self, status):
+        author = status.author
+        print('*'*50)
+        print(author.screen_name, author.followers_count, status.text)
+        print('*'*50)
+        text = status.text.lower()
+        nonascii = ''.join([c for c in text if ord(c) >= 128])
+        if len(nonascii) > 0:
+            print('tweet skipped.')
+            fout.write(nonascii)
+            fout.flush()
+            return
+        global iteration
+        iteration += 1
+        print('Iteration', iteration)
 
-        for i in range(400):
-            x = np.zeros((1, maxlen, len(chars)))
+        sentences = []
+        next_chars = []
+        for i in range(0, len(text) - maxlen, step):
+            sentence = text[i: i + maxlen]
+            sentences.append(sentence)
+            next_chars.append(text[i + maxlen])
+
+    def learn(self):
+        print('Vectorization...')
+        X = np.zeros((len(sentences), maxlen, len(chars)), dtype=np.bool)
+        y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
+        for i, sentence in enumerate(sentences):
             for t, char in enumerate(sentence):
-                x[0, t, c2i[char]] = 1.
+                X[i, t, c2i[char]] = 1
+            y[i, c2i[next_chars[i]]] = 1
+        model.fit(X, y, batch_size=128, nb_epoch=1)
+        print('Model fitted')
 
-            preds = model.predict(x, verbose=0)[0]
-            next_index = sample(preds, diversity)
-            next_char = i2c[next_index]
+        start_index = random.randint(0, len(text) - maxlen - 1)
 
-            generated += next_char
-            sentence = sentence[1:] + next_char
+        if iteration % 50 is not 0:
+            return
+        for diversity in [0.2, 0.5]:
+            print()
+            print('----- diversity:', diversity)
 
-            sys.stdout.write(next_char)
-            sys.stdout.flush()
-        print()
+            generated = ''
+            sentence = text[start_index: start_index + maxlen]
+            generated += sentence
+            print('----- Generating with seed: "' + sentence + '"')
+            sys.stdout.write(generated)
+
+            for i in range(140 - len(sentence)):
+                x = np.zeros((1, maxlen, len(chars)))
+                for t, char in enumerate(sentence):
+                    ind = c2i[char]
+                    x[0, t, ind] = 1.
+
+                preds = model.predict(x, verbose=0)[0]
+                next_index = sample(preds, diversity)
+                next_char = i2c[next_index]
+
+                generated += next_char
+                sentence = sentence[1:] + next_char
+
+                sys.stdout.write(next_char)
+                sys.stdout.flush()
+            print()
+
+
+
+if (sys.stdout.encoding is None):
+    print >> sys.stderr, "please set python env PYTHONIOENCODING=UTF-8, example: export PYTHONIOENCODING=UTF-8, when write to stdout."
+    exit(1)
+
+
+
+l = StdOutListener()
+auth = OAuthHandler(consumer_key, consumer_secret)
+auth.set_access_token(access_token, access_token_secret)
+stream = Stream(auth, l)
+
+#This line filter Twitter Streams to capture data by the keywords: 'python', 'javascript', 'ruby'
+stream.filter(track=['i'], async=False)
