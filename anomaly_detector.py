@@ -52,7 +52,6 @@ maxlen = 14
 step = 3
 
 
-
 # build the model: a single LSTM
 print('Build model...')
 model = Sequential()

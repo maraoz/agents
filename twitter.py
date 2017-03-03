@@ -31,7 +31,7 @@ class StdOutListener(StreamListener):
             size = os.fstat(fout.fileno()).st_size
             print('Parsed', amount, 'tweets')
             print('size', size)
-            if size > 1e5:
+            if size > 1e6:
                 fout.close()
                 os.rename(currentFile(), currentFile(True))
                 batch += 1
